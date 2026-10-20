@@ -3,6 +3,10 @@ import os
 import re
 import sys
 import time
+
+import xml.etree.ElementTree as ET
+from email.utils import format_datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from urllib.parse import quote
 
@@ -75,12 +79,39 @@ def publish_to_vk(message):
     return True
 
 
+def write_public_rss(entries):
+    """Write a small RSS feed file for VK's RSS importer."""
+    rss = ET.Element("rss", version="2.0")
+    channel = ET.SubElement(rss, "channel")
+    ET.SubElement(channel, "title").text = "Футбол без фильтра"
+    ET.SubElement(channel, "link").text = "https://github.com/kadyrovnikolaj9-collab/football-auto-publisher"
+    ET.SubElement(channel, "description").text = "Автоматическая лента футбольных новостей"
+    ET.SubElement(channel, "lastBuildDate").text = format_datetime(datetime.now(timezone.utc))
+    for entry in entries[:20]:
+        item = ET.SubElement(channel, "item")
+        ET.SubElement(item, "title").text = clean_text(entry.get("title", "Новости футбола"))
+        ET.SubElement(item, "link").text = clean_text(entry.get("link", ""))
+        ET.SubElement(item, "guid", isPermaLink="true").text = clean_text(entry.get("link", ""))
+        ET.SubElement(item, "description").text = clean_text(entry.get("summary", entry.get("title", "")))
+        published = entry.get("published_parsed")
+        if published:
+            try:
+                from calendar import timegm
+                dt = datetime.fromtimestamp(timegm(published), timezone.utc)
+                ET.SubElement(item, "pubDate").text = format_datetime(dt)
+            except (OverflowError, ValueError, TypeError):
+                pass
+    ET.ElementTree(rss).write("feed.xml", encoding="utf-8", xml_declaration=True)
+    print(f"Wrote public RSS feed with {min(len(entries), 20)} items.")
+
+
 def main():
     state = load_state()
     posted = set(state.get("posted", []))
     feed = feedparser.parse(FEED_URL)
     if feed.bozo and not feed.entries:
         raise RuntimeError(f"Could not read RSS feed: {feed.bozo_exception}")
+    write_public_rss(feed.entries)
 
     new_entries = []
     for entry in feed.entries:
